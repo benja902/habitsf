@@ -44,9 +44,13 @@ export function HabitsModule() {
 
     setState(prev => ({ ...prev, loading: true, error: null }))
     try {
-      const habits = await getTodayHabits()
+      // OPTIMIZACIÓN: Pasar member.id para evitar getCurrentMember() refetch
+      const habits = member?.id
+        ? await getTodayHabits(member.id)  // Optimized path
+        : await getTodayHabits()           // Legacy fallback
+
       const totalTime = performance.now() - startTime
-      console.log('🟢 loadHabits: SUCCESS in', totalTime, 'ms')
+      console.log('🟢 loadHabits: SUCCESS in', totalTime, 'ms', member?.id ? '(optimized)' : '(legacy)')
 
       // Actualizar cache
       lastFetchRef.current = {

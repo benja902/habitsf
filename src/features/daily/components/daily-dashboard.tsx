@@ -86,14 +86,19 @@ export function DailyDashboard() {
 
     setState(prev => ({ ...prev, loading: true, error: null }))
     try {
-      // Cargar ambos en paralelo
-      const [habits, tasks] = await Promise.all([
-        getTodayHabits(),
-        getTodayTasks()
-      ])
+      // OPTIMIZACIÓN: Cargar ambos en paralelo usando member.id para evitar waterfalls
+      const [habits, tasks] = member?.id
+        ? await Promise.all([  // Optimized path - parallel + no refetch
+            getTodayHabits(member.id),
+            getTodayTasks(member.id)
+          ])
+        : await Promise.all([  // Legacy fallback
+            getTodayHabits(),
+            getTodayTasks()
+          ])
 
       const totalTime = performance.now() - startTime
-      console.log('🟢 loadDailyData: SUCCESS in', totalTime, 'ms')
+      console.log('🟢 loadDailyData: SUCCESS in', totalTime, 'ms', member?.id ? '(optimized)' : '(legacy)')
 
       // Actualizar cache
       lastFetchRef.current = {

@@ -43,15 +43,27 @@ export interface HabitWithProgress extends HabitAssignment {
 }
 
 /**
- * Obtener hábitos del miembro actual para hoy - CONSERVATIVO
+ * Obtener hábitos del miembro actual para hoy - OPTIMIZADO con member_id
  */
-export async function getTodayHabits(): Promise<HabitWithProgress[]> {
+export async function getTodayHabits(memberId?: string): Promise<HabitWithProgress[]> {
   console.log('🟡 getTodayHabits: START')
   const startTime = performance.now()
 
-  const member = await getCurrentMember()
-  if (!member) throw new Error('No authenticated member found')
-  console.log('🟡 Member fetched:', performance.now() - startTime, 'ms')
+  let finalMemberId = memberId
+
+  // Si no se pasa memberId, usar el método legacy (getCurrentMember)
+  if (!finalMemberId) {
+    const member = await getCurrentMember()
+    if (!member) throw new Error('No authenticated member found')
+    finalMemberId = member.id
+    console.log('🟡 Member fetched (legacy):', performance.now() - startTime, 'ms')
+  } else {
+    // Validar que el memberId pertenece al usuario autenticado
+    const { validateMemberOwnership } = await import('@/features/auth/actions/member-validation')
+    const isValid = await validateMemberOwnership(finalMemberId)
+    if (!isValid) throw new Error('Invalid member access')
+    console.log('🟡 Member validated (optimized):', performance.now() - startTime, 'ms')
+  }
 
   const supabase = await createClient()
   const today = new Date().toISOString().split('T')[0]
@@ -77,7 +89,7 @@ export async function getTodayHabits(): Promise<HabitWithProgress[]> {
         points
       )
     `)
-    .eq('member_id', member.id)
+    .eq('member_id', finalMemberId)
   console.log('🟡 Assignments query:', performance.now() - assignmentsStart, 'ms')
 
   if (assignmentsError) {
@@ -112,7 +124,7 @@ export async function getTodayHabits(): Promise<HabitWithProgress[]> {
   const { data: todayLogs, error: logsError } = await supabase
     .from('habit_logs')
     .select('*')
-    .eq('member_id', member.id)
+    .eq('member_id', finalMemberId)
     .eq('date', today)
     .in('habit_id', todayAssignments.map((a: any) => a.habit_id))
   console.log('🟡 All logs query:', performance.now() - logsStart, 'ms')
@@ -144,7 +156,7 @@ export async function getTodayHabits(): Promise<HabitWithProgress[]> {
   console.log('🟡 Combine data:', performance.now() - combineStart, 'ms')
 
   const totalTime = performance.now() - startTime
-  console.log('🟢 getTodayHabits: SUCCESS in', totalTime, 'ms', '(reduced from 3 to 2 queries)')
+  console.log('🟢 getTodayHabits: SUCCESS in', totalTime, 'ms', memberId ? '(optimized)' : '(legacy)')
   return habitsWithProgress
 }
 

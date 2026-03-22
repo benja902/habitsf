@@ -39,15 +39,39 @@ export interface RotativeScheduleItem {
 }
 
 /**
- * Obtener tareas del miembro actual para hoy
+ * Obtener tareas del miembro actual para hoy - OPTIMIZADO con member_id
  */
-export async function getTodayTasks(): Promise<TaskWithProgress[]> {
+export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress[]> {
   console.log('🟡 getTodayTasks: START')
   const startTime = performance.now()
 
-  const member = await getCurrentMember()
-  if (!member) throw new Error('No authenticated member found')
-  console.log('🟡 Member fetched:', performance.now() - startTime, 'ms')
+  let finalMemberId = memberId
+  let memberName = ''
+
+  // Si no se pasa memberId, usar el método legacy (getCurrentMember)
+  if (!finalMemberId) {
+    const member = await getCurrentMember()
+    if (!member) throw new Error('No authenticated member found')
+    finalMemberId = member.id
+    memberName = member.name
+    console.log('🟡 Member fetched (legacy):', performance.now() - startTime, 'ms')
+  } else {
+    // Validar que el memberId pertenece al usuario autenticado y obtener name
+    const { validateMemberOwnership } = await import('@/features/auth/actions/member-validation')
+    const isValid = await validateMemberOwnership(finalMemberId)
+    if (!isValid) throw new Error('Invalid member access')
+
+    // Obtener solo el name del member para el response
+    const supabase = await createClient()
+    const { data: memberData } = await supabase
+      .from('family_members')
+      .select('name')
+      .eq('id', finalMemberId)
+      .single()
+    memberName = memberData?.name || 'Unknown'
+
+    console.log('🟡 Member validated (optimized):', performance.now() - startTime, 'ms')
+  }
 
   const supabase = await createClient()
   const today = new Date().toISOString().split('T')[0]
@@ -74,7 +98,7 @@ export async function getTodayTasks(): Promise<TaskWithProgress[]> {
         is_active
       )
     `)
-    .eq('member_id', member.id)
+    .eq('member_id', finalMemberId)
     .eq('day_of_week', todayDayOfWeek)
     .eq('tasks.is_active', true)
   console.log('🟡 Rotative assignments query:', performance.now() - rotativeStart, 'ms')
@@ -89,7 +113,7 @@ export async function getTodayTasks(): Promise<TaskWithProgress[]> {
   const { data: fixedTasks, error: fixedError } = await supabase
     .from('tasks')
     .select('*')
-    .eq('fixed_member_id', member.id)
+    .eq('fixed_member_id', finalMemberId)
     .eq('is_active', true)
     .eq('is_rotative', false)
   console.log('🟡 Fixed tasks query:', performance.now() - fixedStart, 'ms')
@@ -115,8 +139,8 @@ export async function getTodayTasks(): Promise<TaskWithProgress[]> {
         points: task.points,
         is_rotative: task.is_rotative,
         completed: false,
-        assigned_member_id: member.id,
-        assigned_member_name: member.name
+        assigned_member_id: finalMemberId,
+        assigned_member_name: memberName
       })
     }
   }
@@ -133,8 +157,8 @@ export async function getTodayTasks(): Promise<TaskWithProgress[]> {
         points: task.points,
         is_rotative: task.is_rotative,
         completed: false,
-        assigned_member_id: member.id,
-        assigned_member_name: member.name
+        assigned_member_id: finalMemberId,
+        assigned_member_name: memberName
       })
     }
   }
@@ -149,7 +173,7 @@ export async function getTodayTasks(): Promise<TaskWithProgress[]> {
   const { data: todayDailyTasks, error: dailyTasksError } = await supabase
     .from('daily_tasks')
     .select('*')
-    .eq('member_id', member.id)
+    .eq('member_id', finalMemberId)
     .eq('date', today)
     .in('task_id', allAssignedTasks.map(t => t.task_id))
   console.log('🟡 Daily tasks query:', performance.now() - dailyTasksStart, 'ms')
@@ -175,7 +199,7 @@ export async function getTodayTasks(): Promise<TaskWithProgress[]> {
   console.log('🟡 Combine data:', performance.now() - combineStart, 'ms')
 
   const totalTime = performance.now() - startTime
-  console.log('🟢 getTodayTasks: SUCCESS in', totalTime, 'ms')
+  console.log('🟢 getTodayTasks: SUCCESS in', totalTime, 'ms', memberId ? '(optimized)' : '(legacy)')
   return tasksWithProgress
 }
 

@@ -44,9 +44,13 @@ export function TasksModule() {
 
     setState(prev => ({ ...prev, loading: true, error: null }))
     try {
-      const tasks = await getTodayTasks()
+      // OPTIMIZACIÓN: Pasar member.id para evitar getCurrentMember() refetch
+      const tasks = member?.id
+        ? await getTodayTasks(member.id)  // Optimized path
+        : await getTodayTasks()           // Legacy fallback
+
       const totalTime = performance.now() - startTime
-      console.log('🟢 loadTasks: SUCCESS in', totalTime, 'ms')
+      console.log('🟢 loadTasks: SUCCESS in', totalTime, 'ms', member?.id ? '(optimized)' : '(legacy)')
 
       // Actualizar cache
       lastFetchRef.current = {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {CheckSquare, ListTodo, AlertTriangle, ChevronRight, TrendingUp } from 'lucide-react'
 import Link from 'next/link'
 import { getDashboardData } from '@/features/dashboard/actions/dashboard'
@@ -13,19 +13,53 @@ export function Dashboard() {
   const [data, setData] = useState<DashboardData>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const result = await getDashboardData()
-        setData(result)
-      } catch (error) {
-        console.error('Error loading dashboard:', error)
-      } finally {
-        setLoading(false)
-      }
+  // Cache con timestamp (mismo patrón que otros módulos exitosos)
+  const lastFetchRef = useRef<{ timestamp: number }>({
+    timestamp: 0
+  })
+
+  const loadData = async (force = false) => {
+    const now = Date.now()
+    const timeSinceLastFetch = now - lastFetchRef.current.timestamp
+
+    // Cache de 3 minutos (mismo que daily-dashboard, pantalla principal)
+    if (!force && timeSinceLastFetch < 180000) {
+      console.log('🟡 loadDashboard: SKIPPED (cached, last fetch', timeSinceLastFetch, 'ms ago)')
+      return
     }
 
-    loadData()
+    console.log('🟡 loadDashboard: START')
+    const startTime = performance.now()
+
+    setLoading(true)
+    try {
+      const result = await getDashboardData()
+      const totalTime = performance.now() - startTime
+      console.log('🟢 loadDashboard: SUCCESS in', totalTime, 'ms')
+
+      // Actualizar cache
+      lastFetchRef.current = {
+        timestamp: now
+      }
+
+      setData(result)
+    } catch (error) {
+      const totalTime = performance.now() - startTime
+      console.error('🔴 loadDashboard: ERROR after', totalTime, 'ms', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    console.log('🟡 Dashboard useEffect triggered')
+
+    // Debounce: esperar 100ms (mismo patrón que otros módulos)
+    const timeout = setTimeout(() => {
+      loadData(false) // No forzar, usar cache si es reciente
+    }, 100)
+
+    return () => clearTimeout(timeout)
   }, [])
 
   if (loading) {
