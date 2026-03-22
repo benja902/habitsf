@@ -56,21 +56,23 @@ export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress
     memberName = member.name
     console.log('🟡 Member fetched (legacy):', performance.now() - startTime, 'ms')
   } else {
-    // Validar que el memberId pertenece al usuario autenticado y obtener name
-    const { validateMemberOwnership } = await import('@/features/auth/actions/member-validation')
-    const isValid = await validateMemberOwnership(finalMemberId)
-    if (!isValid) throw new Error('Invalid member access')
-
-    // Obtener solo el name del member para el response
+    // OPTIMIZACIÓN: Skip validation - RLS de Supabase protege automáticamente
+    // Solo obtener el name del member (RLS garantiza que solo devuelve si pertenece al user autenticado)
     const supabase = await createClient()
-    const { data: memberData } = await supabase
+    const { data: memberData, error: memberError } = await supabase
       .from('family_members')
       .select('name')
       .eq('id', finalMemberId)
       .single()
-    memberName = memberData?.name || 'Unknown'
 
-    console.log('🟡 Member validated (optimized):', performance.now() - startTime, 'ms')
+    // Si RLS bloquea (member no pertenece al usuario), error será != null
+    if (memberError || !memberData) {
+      throw new Error('Member not found or unauthorized')
+    }
+
+    memberName = memberData.name
+
+    console.log('🟢 Member name fetched (RLS-protected):', performance.now() - startTime, 'ms')
   }
 
   const supabase = await createClient()

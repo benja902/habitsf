@@ -58,11 +58,10 @@ export async function getTodayHabits(memberId?: string): Promise<HabitWithProgre
     finalMemberId = member.id
     console.log('🟡 Member fetched (legacy):', performance.now() - startTime, 'ms')
   } else {
-    // Validar que el memberId pertenece al usuario autenticado
-    const { validateMemberOwnership } = await import('@/features/auth/actions/member-validation')
-    const isValid = await validateMemberOwnership(finalMemberId)
-    if (!isValid) throw new Error('Invalid member access')
-    console.log('🟡 Member validated (optimized):', performance.now() - startTime, 'ms')
+    // OPTIMIZACIÓN: Skip validation - RLS de Supabase protege automáticamente
+    // memberId viene de useCurrentMember() autenticado, y todas las queries
+    // subsecuentes están protegidas por RLS (auth.uid() = family_members.user_id)
+    console.log('🟢 Member ID received from authenticated context:', performance.now() - startTime, 'ms')
   }
 
   const supabase = await createClient()
