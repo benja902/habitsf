@@ -27,7 +27,7 @@ export interface TaskWithProgress extends TaskAssignment {
   today_task?: DailyTask
   completed: boolean
   assigned_member_id: string
-  assigned_member_name: string
+  assigned_member_name?: string  // Optional: solo usado en vistas admin
 }
 
 export interface RotativeScheduleItem {
@@ -56,23 +56,9 @@ export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress
     memberName = member.name
     console.log('🟡 Member fetched (legacy):', performance.now() - startTime, 'ms')
   } else {
-    // OPTIMIZACIÓN: Skip validation - RLS de Supabase protege automáticamente
-    // Solo obtener el name del member (RLS garantiza que solo devuelve si pertenece al user autenticado)
-    const supabase = await createClient()
-    const { data: memberData, error: memberError } = await supabase
-      .from('family_members')
-      .select('name')
-      .eq('id', finalMemberId)
-      .single()
-
-    // Si RLS bloquea (member no pertenece al usuario), error será != null
-    if (memberError || !memberData) {
-      throw new Error('Member not found or unauthorized')
-    }
-
-    memberName = memberData.name
-
-    console.log('🟢 Member name fetched (RLS-protected):', performance.now() - startTime, 'ms')
+    // OPTIMIZACIÓN: Skip member name query - no requerido para "Mi Día"
+    // RLS garantiza que finalMemberId pertenece al usuario autenticado
+    console.log('🟢 Member ID received from authenticated context (skipping name query):', performance.now() - startTime, 'ms')
   }
 
   const supabase = await createClient()
@@ -84,41 +70,45 @@ export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress
 
   console.log('🟡 Today is:', today, ' - Day of week:', todayDayOfWeek)
 
-  // PASO 1: Obtener tareas rotativas para hoy del member actual
-  const rotativeStart = performance.now()
-  const { data: rotativeAssignments, error: rotativeError } = await supabase
-    .from('rotative_schedules')
-    .select(`
-      task_id,
-      tasks!inner (
-        id,
-        name,
-        description,
-        icon,
-        points,
-        is_rotative,
-        is_active
-      )
-    `)
-    .eq('member_id', finalMemberId)
-    .eq('day_of_week', todayDayOfWeek)
-    .eq('tasks.is_active', true)
-  console.log('🟡 Rotative assignments query:', performance.now() - rotativeStart, 'ms')
+  // OPTIMIZACIÓN: Queries paralelas (rotative + fixed) en vez de secuenciales
+  const queriesStart = performance.now()
+  const [
+    { data: rotativeAssignments, error: rotativeError },
+    { data: fixedTasks, error: fixedError }
+  ] = await Promise.all([
+    // Query 1: Tareas rotativas para hoy
+    supabase
+      .from('rotative_schedules')
+      .select(`
+        task_id,
+        tasks!inner (
+          id,
+          name,
+          description,
+          icon,
+          points,
+          is_rotative,
+          is_active
+        )
+      `)
+      .eq('member_id', finalMemberId)
+      .eq('day_of_week', todayDayOfWeek)
+      .eq('tasks.is_active', true),
+
+    // Query 2: Tareas fijas del member
+    supabase
+      .from('tasks')
+      .select('id, name, description, icon, points, is_rotative')  // Solo campos necesarios
+      .eq('fixed_member_id', finalMemberId)
+      .eq('is_active', true)
+      .eq('is_rotative', false)
+  ])
+  console.log('🟢 Parallel tasks queries (rotative + fixed):', performance.now() - queriesStart, 'ms')
 
   if (rotativeError) {
     console.error('Error fetching rotative assignments:', rotativeError)
     // Continuar sin tareas rotativas
   }
-
-  // PASO 2: Obtener tareas fijas del member actual (si las hay)
-  const fixedStart = performance.now()
-  const { data: fixedTasks, error: fixedError } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('fixed_member_id', finalMemberId)
-    .eq('is_active', true)
-    .eq('is_rotative', false)
-  console.log('🟡 Fixed tasks query:', performance.now() - fixedStart, 'ms')
 
   if (fixedError) {
     console.error('Error fetching fixed tasks:', fixedError)
@@ -142,7 +132,7 @@ export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress
         is_rotative: task.is_rotative,
         completed: false,
         assigned_member_id: finalMemberId,
-        assigned_member_name: memberName
+        assigned_member_name: memberName || undefined  // Solo disponible en path legacy
       })
     }
   }
@@ -160,7 +150,7 @@ export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress
         is_rotative: task.is_rotative,
         completed: false,
         assigned_member_id: finalMemberId,
-        assigned_member_name: memberName
+        assigned_member_name: memberName || undefined  // Solo disponible en path legacy
       })
     }
   }
@@ -174,7 +164,7 @@ export async function getTodayTasks(memberId?: string): Promise<TaskWithProgress
   const dailyTasksStart = performance.now()
   const { data: todayDailyTasks, error: dailyTasksError } = await supabase
     .from('daily_tasks')
-    .select('*')
+    .select('task_id, completed')  // Solo campos necesarios
     .eq('member_id', finalMemberId)
     .eq('date', today)
     .in('task_id', allAssignedTasks.map(t => t.task_id))

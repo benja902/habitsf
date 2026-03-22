@@ -122,7 +122,7 @@ export async function getTodayHabits(memberId?: string): Promise<HabitWithProgre
   const logsStart = performance.now()
   const { data: todayLogs, error: logsError } = await supabase
     .from('habit_logs')
-    .select('*')
+    .select('id, habit_id, member_id, date, value, completed, created_at')  // Solo campos necesarios
     .eq('member_id', finalMemberId)
     .eq('date', today)
     .in('habit_id', todayAssignments.map((a: any) => a.habit_id))
